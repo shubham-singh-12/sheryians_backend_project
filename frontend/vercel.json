@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://sheryians-backend-project.onrender.com/api/:path*"
+    }
+  ]
+}
