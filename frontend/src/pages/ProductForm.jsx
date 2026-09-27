@@ -17,15 +17,40 @@ const initialForm = {
     stock: "",
     image: "",
 };
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB, comfortably under the backend's ~5MB cap
+const MAX_ORIGINAL_FILE_BYTES = 15 * 1024 * 1024; // reject absurdly large uploads outright
+const MAX_IMAGE_WIDTH = 900; // px - plenty sharp for a product card, far smaller than a raw phone photo
+const JPEG_QUALITY = 0.7;
 
-// Reads a File object and resolves with a base64 data URL
-// (e.g. "data:image/png;base64,...") that can be sent straight to the API
-// and stored directly in MongoDB, with no separate file server required.
-const readFileAsDataUrl = (file) =>
+// Reads a File, draws it onto a canvas at a capped width, and re-encodes it
+// as a compressed JPEG data URL. A typical multi-megabyte phone photo shrinks
+// down to well under 200KB this way. This matters because every product's
+// image is stored directly in MongoDB and re-sent in full on every GET
+// /api/products call - an uncompressed image would make every page load of
+// every product noticeably slower for everyone, not just the uploader.
+const compressImageToDataUrl = (file) =>
     new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
+
+        reader.onload = (readerEvent) => {
+            const img = new Image();
+
+            img.onload = () => {
+                const scale = Math.min(1, MAX_IMAGE_WIDTH / img.width);
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.round(img.width * scale);
+                canvas.height = Math.round(img.height * scale);
+
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                resolve(canvas.toDataURL("image/jpeg", JPEG_QUALITY));
+            };
+
+            img.onerror = () =>
+                reject(new Error("Could not load the selected image"));
+            img.src = readerEvent.target.result;
+        };
+
         reader.onerror = () =>
             reject(new Error("Could not read the selected file"));
         reader.readAsDataURL(file);
@@ -82,16 +107,18 @@ const ProductForm = () => {
             return;
         }
 
-        if (file.size > MAX_IMAGE_BYTES) {
-            setImageError("Image is too large. Please choose one under 4MB.");
+        if (file.size > MAX_ORIGINAL_FILE_BYTES) {
+            setImageError("Image is too large. Please choose one under 15MB.");
             return;
         }
 
         try {
-            const dataUrl = await readFileAsDataUrl(file);
+            const dataUrl = await compressImageToDataUrl(file);
             setForm((prev) => ({ ...prev, image: dataUrl }));
         } catch (err) {
-            setImageError("Could not read that image, please try another file");
+            setImageError(
+                "Could not process that image, please try another file",
+            );
         }
     };
 
